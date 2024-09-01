@@ -1,60 +1,73 @@
 pipeline {
-  agent {
-    label "jenkins-maven"
-  }
-  environment {
-    ORG = 'bakuppus'
-    APP_NAME = 'amazonlinux-httpd-dockerfile'
-    CHARTMUSEUM_CREDS = credentials('jenkins-x-chartmuseum')
-    DOCKER_REGISTRY_ORG = 'bakuppus'
-  }
-  stages {
-    stage('CI Build and push snapshot') {
-      when {
-        branch 'PR-*'
-      }
-      environment {
-        PREVIEW_VERSION = "0.0.0-SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER"
-        PREVIEW_NAMESPACE = "$APP_NAME-$BRANCH_NAME".toLowerCase()
-        HELM_RELEASE = "$PREVIEW_NAMESPACE".toLowerCase()
-      }
-      steps {
-        container('maven') {
-          sh "skaffold version"
-          sh "export VERSION=$PREVIEW_VERSION && skaffold build -f skaffold.yaml"
+    agent {
+        kubernetes {
+            yaml '''
+            apiVersion: v1
+            kind: Pod
+            spec:
+              containers:
+              - name: buildah
+                image: dtzar/helm-kubectl:latest
+                command:
+                - cat
+                tty: true
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                - name: buildah-storage
+                  mountPath: /var/lib/containers
+              volumes:
+              - name: buildah-storage
+                emptyDir: {}
+            '''
         }
-      }
     }
-    stage('Build Release') {
-      when {
-        branch 'master'
-      }
-      steps {
-        container('maven') {
-
-          // ensure we're not on a detached head
-          sh "git checkout master"
-          sh "git config --global credential.helper store"
-          sh "jx step git credentials"
-          sh "jx step next-version --use-git-tag-only --tag"
-          sh "export VERSION=`cat VERSION` && skaffold build -f skaffold.yaml"
+    stages {
+        stage('Install Git, Java, buildah, and podman dependencies') {
+            steps {
+                container('buildah') {
+                    sh '''
+                    apk add --no-cache git openjdk8 buildah
+                    apk add --no-cache podman netavark aardvark-dns
+                    '''
+                }
+            }
         }
-      }
+        stage('Clone Git Repository') {
+            steps {
+                container('buildah') {
+                    sh 'git clone https://github.com/kikan321/amazonlinux-httpd-Dockerfile.git'
+                }
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                container('buildah') {
+                    sh 'buildah bud -t my-docker-image:latest amazonlinux-httpd-Dockerfile/'
+                }
+            }
+        }
+        stage('Push Docker Image to Artifactory') {
+            steps {
+                container('buildah') {
+                    withCredentials([usernamePassword(credentialsId: 'artifactory-credentials', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PASSWORD')]) {
+                        sh '''
+                        buildah login --tls-verify=false -u $ARTIFACTORY_USER -p $ARTIFACTORY_PASSWORD http://57.152.50.3:8082
+                        buildah push --tls-verify=false my-docker-image:latest docker://57.152.50.3:8082/poc/my-docker-image:latest
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                container('buildah') {
+                    sh '''
+                    cd amazonlinux-httpd-Dockerfile
+                    kubectl apply -f deployment.yaml
+                    '''
+                }
+            }
+        }
     }
-    stage('Promote to Environments') {
-      when {
-        branch 'master'
-      }
-      steps {
-        container('maven') {
-          sh "jx step changelog --version v\$(cat VERSION)"
-        }
-      }
-    }
-  }
-  post {
-        always {
-          cleanWs()
-        }
-  }
 }
