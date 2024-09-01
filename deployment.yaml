@@ -19,3 +19,6 @@ spec:
         image: 57.152.50.3:8082/poc/my-docker-image:latest
         ports:
         - containerPort: 80
+      imagePullSecrets:
+      - name: artifactory-secret
+
