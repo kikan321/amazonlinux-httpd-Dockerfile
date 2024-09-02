@@ -27,7 +27,7 @@ pipeline {
             steps {
                 container('buildah') {
                     sh '''
-                    apk add --no-cache git openjdk8 buildah
+                    apk add --no-cache git openjdk8 buildah coreutils
                     apk add --no-cache podman netavark aardvark-dns
                     '''
                 }
