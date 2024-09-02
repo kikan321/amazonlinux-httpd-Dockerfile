@@ -22,12 +22,17 @@ pipeline {
             '''
         }
     }
+    environment {
+        SONARQUBE_TOKEN = credentials('sonar')
+        SONAR_SCANNER_HOME = tool name: 'sonar'
+        PATH = "${env.PATH}:${env.SONAR_SCANNER_HOME}/bin"
+    }
     stages {
         stage('Install Git, Java, buildah, and podman dependencies') {
             steps {
                 container('buildah') {
                     sh '''
-                    apk add --no-cache git openjdk8 buildah coreutils
+                    apk add --no-cache git openjdk17 buildah
                     apk add --no-cache podman netavark aardvark-dns
                     '''
                 }
@@ -44,6 +49,21 @@ pipeline {
             steps {
                 container('buildah') {
                     sh 'buildah bud -t my-docker-image:latest amazonlinux-httpd-Dockerfile/'
+                }
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                container('buildah') {
+                    withSonarQubeEnv('SonarQube') {
+                        sh '''
+                        sonar-scanner \
+                          -Dsonar.projectKey=POC \
+                          -Dsonar.sources=. \
+                          -Dsonar.host.url=http://135.237.31.112:9000/ \
+                          -Dsonar.token=$SONARQUBE_TOKEN
+                        '''
+                    }
                 }
             }
         }
